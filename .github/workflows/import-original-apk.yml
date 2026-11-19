@@ -1,0 +1,109 @@
+name: Import original APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/import-original-apk.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install browser downloader
+        run: |
+          set -euo pipefail
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      - name: Download transfer through SwissTransfer website
+        env:
+          SWISSTRANSFER_URL: https://www.swisstransfer.com/dl/01a1f424-4571-7276-b284-35fde8742e32
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/swiss"
+          node <<'NODE'
+          const { chromium } = require('playwright');
+          const path = require('node:path');
+          (async () => {
+            const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+            try {
+              const context = await browser.newContext({ acceptDownloads: true });
+              const page = await context.newPage();
+              page.setDefaultTimeout(120000);
+              await page.goto(process.env.SWISSTRANSFER_URL, { waitUntil: 'domcontentloaded', timeout: 120000 });
+              await page.getByRole('button', { name: /Download all/i }).waitFor();
+              console.log('SwissTransfer page:', (await page.locator('body').innerText()).slice(0, 2000));
+              const [download] = await Promise.all([
+                page.waitForEvent('download', { timeout: 21600000 }),
+                page.getByRole('button', { name: /Download all/i }).click()
+              ]);
+              const target = path.join(process.env.RUNNER_TEMP, 'swiss', 'transfer.zip');
+              await download.saveAs(target);
+              console.log('SwissTransfer download saved:', target);
+            } finally {
+              await browser.close();
+            }
+          })().catch(error => { console.error(error); process.exit(1); });
+          NODE
+
+      - name: Preserve and verify original APK bytes
+        run: |
+          set -euo pipefail
+          SOURCE="$RUNNER_TEMP/swiss/transfer.zip"
+          TARGET="$RUNNER_TEMP/BRFMod_v70.apk"
+          test -s "$SOURCE"
+          if [ "$(head -c 2 "$SOURCE")" != "PK" ]; then
+            echo "::error::Downloaded file does not have an APK/ZIP signature."
+            exit 1
+          fi
+          unzip -t "$SOURCE"
+          SIZE="$(stat -c '%s' "$SOURCE")"
+          if [ "$SIZE" -le 0 ] || [ "$SIZE" -ge 2147483648 ]; then
+            echo "::error::File is empty or exceeds GitHub's 2 GiB release-asset limit."
+            exit 1
+          fi
+          cp -- "$SOURCE" "$TARGET"
+          cmp -- "$SOURCE" "$TARGET"
+          SHA256="$(sha256sum "$TARGET" | cut -d ' ' -f 1)"
+          echo "APK size: $SIZE bytes"
+          echo "APK SHA-256: $SHA256"
+          echo "APK_FILE=$TARGET" >> "$GITHUB_ENV"
+          echo "APK_SIZE=$SIZE" >> "$GITHUB_ENV"
+          echo "APK_SHA256=$SHA256" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release and upload unchanged APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create original-apk "$APK_FILE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Original APK" \
+            --notes "Original APK transferred without unpacking or repacking. Size: $APK_SIZE bytes. SHA-256: $APK_SHA256"
+
+      - name: Verify uploaded release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view original-apk --repo "$GITHUB_REPOSITORY" --json assets > "$RUNNER_TEMP/release.json"
+          node -e '
+            const fs = require("node:fs");
+            const data = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/release.json", "utf8"));
+            const asset = data.assets.find(a => a.name === "BRFMod_v70.apk");
+            if (!asset) throw new Error("Uploaded APK asset not found");
+            if (asset.size !== Number(process.env.APK_SIZE)) throw new Error("Uploaded size differs from original size");
+            console.log("Verified asset:", asset.name);
+            console.log("Verified size:", asset.size, "bytes");
+            console.log("Download URL:", asset.browser_download_url);
+          '
