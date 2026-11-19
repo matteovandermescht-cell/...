@@ -2,6 +2,9 @@ name: Import original APK
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/import-original-apk.yml'
 
 permissions:
   contents: write
