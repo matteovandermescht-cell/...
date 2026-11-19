@@ -1,0 +1,71 @@
+name: Import original APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download original SwissTransfer file
+        env:
+          SWISSTRANSFER_URL: https://www.swisstransfer.com/dl/01a1f424-4571-7276-b284-35fde8742e32
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/apk"
+          npx --yes swish-dl "$SWISSTRANSFER_URL" -o "$RUNNER_TEMP/apk"
+          FILE="$RUNNER_TEMP/apk/BRFMod_v70.apk"
+          if [ ! -f "$FILE" ]; then
+            echo "::error::Expected BRFMod_v70.apk was not found. No release was created."
+            find "$RUNNER_TEMP/apk" -maxdepth 2 -type f -printf '%p (%s bytes)\n'
+            exit 1
+          fi
+          SIZE="$(stat -c '%s' "$FILE")"
+          echo "Downloaded filename: $(basename "$FILE")"
+          echo "Downloaded size: $SIZE bytes"
+          if [ "$SIZE" -le 0 ] || [ "$SIZE" -ge 2147483648 ]; then
+            echo "::error::File is empty or exceeds GitHub's 2 GiB release-asset limit. No release was created."
+            exit 1
+          fi
+          SHA256="$(sha256sum "$FILE" | cut -d ' ' -f 1)"
+          echo "SHA256: $SHA256"
+          echo "APK_FILE=$FILE" >> "$GITHUB_ENV"
+          echo "APK_SIZE=$SIZE" >> "$GITHUB_ENV"
+          echo "APK_SHA256=$SHA256" >> "$GITHUB_ENV"
+
+      - name: Create GitHub Release and upload unchanged APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create original-apk "$APK_FILE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Original BRFMod_v70.apk" \
+            --notes "Original APK transferred from the supplied SwissTransfer link without intentional modification. Size: $APK_SIZE bytes. SHA-256: $APK_SHA256"
+
+      - name: Verify release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release view original-apk --repo "$GITHUB_REPOSITORY" --json assets > "$RUNNER_TEMP/release.json"
+          node -e '
+            const fs = require("fs");
+            const data = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/release.json", "utf8"));
+            const asset = data.assets.find(a => a.name === "BRFMod_v70.apk");
+            if (!asset) throw new Error("Release asset BRFMod_v70.apk not found");
+            if (asset.size !== Number(process.env.APK_SIZE)) throw new Error("Uploaded asset size does not match downloaded file size");
+            console.log("Verified asset:", asset.name);
+            console.log("Verified size:", asset.size, "bytes");
+            console.log("Download URL:", asset.url);
+            console.log("Browser download URL:", asset.browser_download_url);
+          '
