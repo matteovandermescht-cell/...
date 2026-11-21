@@ -1,0 +1,73 @@
+name: Analyze original APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download original APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p work
+          curl --fail --location --retry 5 --retry-all-errors \
+            'https://github.com/matteovandermescht-cell/.../releases/download/original-apk/BRFMod_v70.apk' \
+            --output work/BRFMod_v70.apk
+          echo "Downloaded bytes: $(stat -c%s work/BRFMod_v70.apk)"
+          echo "b138487c254a38542d288c6dc8aa8cdda9f08b61e9c4e4a92d0b0199cd685281  work/BRFMod_v70.apk" | sha256sum --check
+
+      - name: Download JADX
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="$(curl -fsSL https://api.github.com/repos/skylot/jadx/releases/latest | jq -r '.assets[] | select(.name | test("jadx-[0-9.]+\\.zip$")) | .browser_download_url' | head -n1)"
+          test -n "$url"
+          curl -fL --retry 3 "$url" -o /tmp/jadx.zip
+          mkdir -p /tmp/jadx
+          unzip -q /tmp/jadx.zip -d /tmp/jadx
+          echo "/tmp/jadx/bin" >> "$GITHUB_PATH"
+          chmod +x /tmp/jadx/bin/jadx
+
+      - name: Decompile APK
+        shell: bash
+        env:
+          JAVA_OPTS: -Xmx5g
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          jadx --show-bad-code --threads-count 2 -d output/decompiled work/BRFMod_v70.apk 2>&1 | tee output/jadx.log
+          {
+            echo "APK: BRFMod_v70.apk"
+            echo "SHA256: b138487c254a38542d288c6dc8aa8cdda9f08b61e9c4e4a92d0b0199cd685281"
+            echo
+            echo "Top-level APK entries:"
+            unzip -Z1 work/BRFMod_v70.apk | head -n 250
+            echo
+            echo "Decompiled output summary:"
+            find output/decompiled -maxdepth 3 -type f | sed 's#^#- #' | head -n 500
+          } > output/analysis-report.txt
+
+      - name: Upload decompiled sources and report
+        uses: actions/upload-artifact@v4
+        with:
+          name: BRFMod-v70-analysis
+          path: |
+            output/analysis-report.txt
+            output/jadx.log
+            output/decompiled/sources/
+            output/decompiled/resources/
+          if-no-files-found: warn
+          compression-level: 6
+          retention-days: 7
