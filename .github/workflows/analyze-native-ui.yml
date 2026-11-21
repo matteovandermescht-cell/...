@@ -1,4 +1,4 @@
-name: Analyze native UI code
+name: Locate native UI labels
 
 on:
   workflow_dispatch:
@@ -7,35 +7,29 @@ permissions:
   contents: read
 
 jobs:
-  analyze-native-ui:
+  locate-native-ui-labels:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 90
     steps:
-      - name: Set up Java for Ghidra
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-
       - name: Install native analysis tools
         shell: bash
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y binutils-aarch64-linux-gnu binutils file jq unzip
+          sudo apt-get install -y binutils file unzip
 
       - name: Download and verify the original APK
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p work output scripts
+          mkdir -p work output
           curl --fail --location --retry 5 --retry-all-errors \
             'https://github.com/matteovandermescht-cell/.../releases/download/original-apk/BRFMod_v70.apk' \
             --output work/BRFMod_v70.apk
           echo "Downloaded bytes: $(stat -c%s work/BRFMod_v70.apk)"
           echo "b138487c254a38542d288c6dc8aa8cdda9f08b61e9c4e4a92d0b0199cd685281  work/BRFMod_v70.apk" | sha256sum --check
 
-      - name: Extract native library and collect ELF metadata
+      - name: Extract native UI library
         shell: bash
         run: |
           set -euo pipefail
@@ -43,193 +37,56 @@ jobs:
           unzip -Z1 work/BRFMod_v70.apk | grep -Fx "$entry"
           unzip -p work/BRFMod_v70.apk "$entry" > work/libbrf.so
           {
-            echo "APK SHA256:"
+            echo "Original APK SHA256:"
             sha256sum work/BRFMod_v70.apk
             echo
             echo "Native library:"
             file work/libbrf.so
             sha256sum work/libbrf.so
             echo
-            echo "ELF header:"
+            echo "ELF header and sections:"
             readelf -h work/libbrf.so
-            echo
-            echo "ELF sections:"
             readelf -SW work/libbrf.so
             echo
-            echo "Dynamic symbols:"
+            echo "Exported dynamic symbols:"
             readelf -Ws work/libbrf.so
-            echo
-            echo "Dynamic symbol table (demangled where possible):"
-            aarch64-linux-gnu-nm -D -C work/libbrf.so || true
-          } > output/native-elf-report.txt
+          } > output/native-library-metadata.txt
 
-      - name: Extract complete native strings with file offsets
+      - name: Locate Combat and visible UI labels
         shell: bash
         run: |
           set -euo pipefail
-          strings -a -t x -n 3 work/libbrf.so > output/libbrf-strings-ascii.txt
-          strings -el -t x -n 3 work/libbrf.so > output/libbrf-strings-utf16le.txt
+          strings -a -t x -n 3 work/libbrf.so > output/libbrf-ascii-strings-with-offsets.txt
+          strings -el -t x -n 3 work/libbrf.so > output/libbrf-utf16le-strings-with-offsets.txt
+
+          pattern='auto[ _-]?farm|combat|visuals?|preferences|menu palette|trophy goal|stop farming|choose next brawler|next brawler|lowest trophies|closest to goal|return|feature status'
+
           {
-            echo "=== ASCII candidates ==="
-            grep -Ein 'auto|farm|trophy|brawler|combat|visual|menu|palette|button|click|overlay|panel|feature|switch|slider|goal|stop|next|return|attack|target' output/libbrf-strings-ascii.txt || true
+            echo "APK SHA256:"
+            sha256sum work/BRFMod_v70.apk
             echo
-            echo "=== UTF-16LE candidates ==="
-            grep -Ein 'auto|farm|trophy|brawler|combat|visual|menu|palette|button|click|overlay|panel|feature|switch|slider|goal|stop|next|return|attack|target' output/libbrf-strings-utf16le.txt || true
-          } > output/native-ui-string-candidates.txt
+            echo "Library SHA256:"
+            sha256sum work/libbrf.so
+            echo
+            echo "Search terms: $pattern"
+            echo
+            echo "=== ASCII strings (file offsets) ==="
+            grep -Ein "$pattern" output/libbrf-ascii-strings-with-offsets.txt || true
+            echo
+            echo "=== UTF-16LE strings (file offsets) ==="
+            grep -Ein "$pattern" output/libbrf-utf16le-strings-with-offsets.txt || true
+          } > output/combat-tab-label-locations.txt
 
-      - name: Download Ghidra
-        shell: bash
-        run: |
-          set -euo pipefail
-          ghidra_url="$(curl -fsSL https://api.github.com/repos/NationalSecurityAgency/ghidra/releases/latest \
-            | jq -r '[.assets[] | select(.name | test("^ghidra_.*_PUBLIC_.*\\.zip$"))][0].browser_download_url // empty')"
-          test -n "$ghidra_url"
-          curl --fail --location --retry 3 "$ghidra_url" --output /tmp/ghidra.zip
-          mkdir -p /opt/ghidra
-          unzip -q /tmp/ghidra.zip -d /opt/ghidra
-          ghidra_home="$(find /opt/ghidra -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-          test -x "$ghidra_home/support/analyzeHeadless"
-          echo "GHIDRA_HOME=$ghidra_home" >> "$GITHUB_ENV"
-
-      - name: Create read-only Ghidra string-reference analysis script
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > scripts/FindUiStringXrefs.java <<'JAVA'
-          import ghidra.app.decompiler.DecompInterface;
-          import ghidra.app.decompiler.DecompileResults;
-          import ghidra.program.model.listing.Data;
-          import ghidra.program.model.listing.DataIterator;
-          import ghidra.program.model.listing.Function;
-          import ghidra.program.model.symbol.Reference;
-          import ghidra.program.model.symbol.ReferenceIterator;
-          import java.io.FileWriter;
-          import java.io.PrintWriter;
-          import java.util.HashSet;
-          import java.util.Locale;
-          import java.util.Set;
-
-          public class FindUiStringXrefs extends ghidra.app.script.GhidraScript {
-              private boolean isCandidate(String value) {
-                  String s = value.toLowerCase(Locale.ROOT);
-                  String[] terms = {
-                      "auto", "farm", "trophy", "brawler", "combat", "visual",
-                      "menu", "palette", "button", "overlay", "panel", "feature",
-                      "switch", "slider", "goal", "stop", "next", "return",
-                      "attack", "target", "preferences"
-                  };
-                  for (String term : terms) {
-                      if (s.contains(term)) return true;
-                  }
-                  return false;
-              }
-
-              @Override
-              public void run() throws Exception {
-                  String outputPath = getScriptArgs().length > 0
-                      ? getScriptArgs()[0]
-                      : "ghidra-ui-string-xrefs.txt";
-                  PrintWriter out = new PrintWriter(new FileWriter(outputPath));
-                  Set<String> decompiledFunctions = new HashSet<String>();
-                  DecompInterface decompiler = new DecompInterface();
-                  decompiler.openProgram(currentProgram);
-
-                  out.println("Program: " + currentProgram.getName());
-                  out.println("This report is read-only; no program bytes are modified.");
-                  out.println();
-
-                  DataIterator dataIterator = currentProgram.getListing().getDefinedData(true);
-                  int matchedStrings = 0;
-                  int matchedReferences = 0;
-
-                  while (dataIterator.hasNext() && !monitor.isCancelled()) {
-                      Data data = dataIterator.next();
-                      String typeName = data.getDataType().getName().toLowerCase(Locale.ROOT);
-                      if (!typeName.contains("string")) continue;
-
-                      String representation = data.getDefaultValueRepresentation();
-                      if (representation == null || !isCandidate(representation)) continue;
-
-                      matchedStrings++;
-                      out.println("STRING @ " + data.getAddress()
-                          + " | type=" + data.getDataType().getName()
-                          + " | value=" + representation);
-
-                      ReferenceIterator references =
-                          currentProgram.getReferenceManager().getReferencesTo(data.getAddress());
-
-                      while (references.hasNext()) {
-                          Reference reference = references.next();
-                          matchedReferences++;
-                          Function function = currentProgram.getFunctionManager()
-                              .getFunctionContaining(reference.getFromAddress());
-
-                          out.println("  XREF from " + reference.getFromAddress()
-                              + " | type=" + reference.getReferenceType());
-
-                          if (function == null) {
-                              out.println("    No containing function was identified.");
-                              continue;
-                          }
-
-                          String key = function.getEntryPoint().toString();
-                          out.println("    FUNCTION " + function.getName()
-                              + " @ " + function.getEntryPoint());
-
-                          if (decompiledFunctions.add(key)) {
-                              DecompileResults result =
-                                  decompiler.decompileFunction(function, 60, monitor);
-                              if (result != null && result.decompileCompleted()
-                                  && result.getDecompiledFunction() != null) {
-                                  out.println("    ----- DECOMPILED FUNCTION -----");
-                                  out.println(result.getDecompiledFunction().getC());
-                                  out.println("    ----- END FUNCTION -----");
-                              } else {
-                                  out.println("    Decompilation unavailable: "
-                                      + (result == null ? "no result" : result.getErrorMessage()));
-                              }
-                          } else {
-                              out.println("    Function already printed above.");
-                          }
-                      }
-                      out.println();
-                  }
-
-                  out.println("Matched string records: " + matchedStrings);
-                  out.println("References examined: " + matchedReferences);
-                  out.close();
-                  decompiler.dispose();
-                  println("Wrote " + outputPath);
-              }
-          }
-          JAVA
-
-      - name: Run Ghidra headless analysis
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p output/ghidra-project
-          "$GHIDRA_HOME/support/analyzeHeadless" \
-            output/ghidra-project BRFModNativeUI \
-            -import work/libbrf.so \
-            -overwrite \
-            -analysisTimeoutPerFile 300 \
-            -scriptPath scripts \
-            -postScript FindUiStringXrefs.java "$GITHUB_WORKSPACE/output/ghidra-ui-string-xrefs.txt" \
-            2>&1 | tee output/ghidra-analysis.log
-
-      - name: Upload native UI code analysis
+      - name: Upload read-only label-location report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: BRFMod-v70-native-ui-code-analysis
+          name: BRFMod-v70-combat-ui-label-locations
           path: |
-            output/native-elf-report.txt
-            output/libbrf-strings-ascii.txt
-            output/libbrf-strings-utf16le.txt
-            output/native-ui-string-candidates.txt
-            output/ghidra-ui-string-xrefs.txt
-            output/ghidra-analysis.log
+            output/native-library-metadata.txt
+            output/libbrf-ascii-strings-with-offsets.txt
+            output/libbrf-utf16le-strings-with-offsets.txt
+            output/combat-tab-label-locations.txt
           if-no-files-found: warn
           compression-level: 9
           retention-days: 14
