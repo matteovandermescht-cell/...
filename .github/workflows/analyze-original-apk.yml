@@ -104,7 +104,7 @@ jobs:
             grep -nE 'package=|activity|service|receiver|application' output/decompiled/resources/AndroidManifest.xml 2>/dev/null | head -n 200 || true
             echo
             echo "=== All non-library Java/Kotlin class paths ==="
-            find output/decompiled/sources -type f \( -name '*.java' -o -name '*.kt' \) | grep -vE '/(androidx|com/google|kotlin|io/flutter|io/sentry|zendesk|com/facebook|com/appsflyer|okhttp3|okio|org/)' | sort | head -n 2500
+            find output/decompiled/sources -type f \( -name '*.java' -o -name '*.kt' \) | grep -vE '/(androidx|com/google|kotlin|io/flutter|io/sentry|zendesk|com/facebook|com/appsflyer|okhttp3|okio|org/)' | sort | sed -n '1,2500p'
             echo
             echo "=== Overlay/menu-related source matches ==="
             grep -RInE 'WindowManager|TYPE_APPLICATION_OVERLAY|addView\(|removeView\(|PopupWindow|LayoutParams|onTouch|setOnClickListener|setVisibility|透明|菜单|浮窗|overlay|mod.?menu|menu.?view|draw.*menu' output/decompiled/sources/defpackage output/decompiled/sources/com/supercell 2>/dev/null | head -n 1500 || true
