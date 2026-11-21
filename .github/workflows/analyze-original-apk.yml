@@ -17,6 +17,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
       - name: Download original APK
         shell: bash
         run: |
@@ -53,45 +59,54 @@ jobs:
           set -e
           echo "$jadx_status" > output/jadx-exit-code.txt
           echo "JADX exit code: $jadx_status"
-          echo "JADX may return exit code 3 when some classes cannot be decompiled; partial output is retained."
 
-      - name: Create analysis report
+      - name: Extract compact UI-focused report
         if: always()
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p output/ui-candidates
+          unzip -Z1 work/BRFMod_v70.apk > output/apk-entries.txt
           {
-            echo "APK: BRFMod_v70.apk"
-            echo "Expected SHA256: b138487c254a38542d288c6dc8aa8cdda9f08b61e9c4e4a92d0b0199cd685281"
+            echo "APK SHA256:"
+            sha256sum work/BRFMod_v70.apk
             echo
             echo "JADX exit code:"
             cat output/jadx-exit-code.txt 2>/dev/null || echo "not available"
             echo
-            echo "Top-level APK entries (first 250):"
-            unzip -Z1 work/BRFMod_v70.apk > output/apk-entries.txt
-            head -n 250 output/apk-entries.txt
+            echo "APK top-level entries:"
+            head -n 300 output/apk-entries.txt
             echo
             echo "Decompiled file count:"
             find output/decompiled -type f | wc -l
             echo
-            echo "Decompiled paths (first 500):"
-            find output/decompiled -type f > output/decompiled-files.txt
-            head -n 500 output/decompiled-files.txt
-          } > output/analysis-report.txt
+            echo "UI-related Java/Kotlin source candidates:"
+            grep -RIlE 'WindowManager|PopupWindow|Floating|TextView|Button|Switch|SeekBar|setAlpha|setBackground|Compose|Material' output/decompiled/sources 2>/dev/null | head -n 250 || true
+            echo
+            echo "Layout/resource XML candidates:"
+            find output/decompiled/resources -type f \( -iname '*layout*.xml' -o -path '*/res/layout/*' -o -path '*/res/drawable*/*' -o -path '*/res/color/*' \) 2>/dev/null | head -n 250 || true
+          } > output/ui-analysis-report.txt
+          # Keep only a compact sample of UI-related source files, with a strict size cap.
+          total=0
+          while IFS= read -r file; do
+            [ -f "$file" ] || continue
+            size=$(stat -c%s "$file")
+            [ "$size" -le 500000 ] || continue
+            [ $((total + size)) -le 12000000 ] || break
+            dest="output/ui-candidates/$(basename "$file")"
+            cp "$file" "$dest"
+            total=$((total + size))
+          done < <(grep -RIlE 'WindowManager|PopupWindow|Floating|TextView|Button|Switch|SeekBar|setAlpha|setBackground|Compose|Material' output/decompiled/sources 2>/dev/null | head -n 250 || true)
 
-      - name: Upload partial or complete analysis
+      - name: Upload compact UI analysis
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: BRFMod-v70-analysis
+          name: BRFMod-v70-UI-analysis
           path: |
-            output/analysis-report.txt
-            output/jadx.log
+            output/ui-analysis-report.txt
             output/jadx-exit-code.txt
-            output/apk-entries.txt
-            output/decompiled-files.txt
-            output/decompiled/sources/
-            output/decompiled/resources/
+            output/ui-candidates/
           if-no-files-found: warn
-          compression-level: 1
+          compression-level: 6
           retention-days: 7
