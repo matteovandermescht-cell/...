@@ -92,6 +92,58 @@ jobs:
             total=$((total + size))
           done < <(grep -RIlE 'WindowManager|PopupWindow|Floating|TextView|Button|Switch|SeekBar|setAlpha|setBackground|Compose|Material' output/decompiled/sources 2>/dev/null | head -n 250 || true)
 
+
+      - name: Extract app-specific code and native UI indicators
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output/deep-scan
+          {
+            echo "=== Package and activity metadata ==="
+            grep -nE 'package=|activity|service|receiver|application' output/decompiled/resources/AndroidManifest.xml 2>/dev/null | head -n 200 || true
+            echo
+            echo "=== All non-library Java/Kotlin class paths ==="
+            find output/decompiled/sources -type f \\( -name '*.java' -o -name '*.kt' \\) | grep -vE '/(androidx|com/google|kotlin|io/flutter|io/sentry|zendesk|com/facebook|com/appsflyer|okhttp3|okio|org/)' | sort | head -n 2500
+            echo
+            echo "=== Overlay/menu-related source matches ==="
+            grep -RInE 'WindowManager|TYPE_APPLICATION_OVERLAY|addView\\(|removeView\\(|PopupWindow|LayoutParams|onTouch|setOnClickListener|setVisibility|透明|菜单|浮窗|overlay|mod.?menu|menu.?view|draw.*menu' output/decompiled/sources/defpackage output/decompiled/sources/com/supercell 2>/dev/null | head -n 1500 || true
+            echo
+            echo "=== Relevant APK asset paths ==="
+            grep -Ei 'overlay|menu|mod|icon|font|flutter_assets|assets/.*(json|html|css|js|ttf|otf|png|webp)' output/apk-entries.txt | head -n 2000 || true
+          } > output/deep-scan/deep-scan-report.txt
+          # Preserve complete app-owned package sources and obfuscated defpackage sources in a capped archive.
+          mkdir -p output/deep-scan/sources
+          total=0
+          while IFS= read -r file; do
+            [ -f "$file" ] || continue
+            size=$(stat -c%s "$file")
+            [ "$size" -le 300000 ] || continue
+            [ $((total + size)) -le 20000000 ] || break
+            rel="${file#output/decompiled/sources/}"
+            mkdir -p "output/deep-scan/sources/$(dirname "$rel")"
+            cp "$file" "output/deep-scan/sources/$rel"
+            total=$((total + size))
+          done < <(find output/decompiled/sources/com/supercell output/decompiled/sources/defpackage -type f -name '*.java' 2>/dev/null | sort)
+          # Extract strings from game/native libraries and dex files, filtering for likely UI/overlay labels.
+          while IFS= read -r entry; do
+            case "$entry" in
+              *.dex|*.so|*.so.*)
+                unzip -p work/BRFMod_v70.apk "$entry" 2>/dev/null | strings -n 5 | grep -Ei 'overlay|floating|window.?manager|popup|menu|visual|combat|settings|switch|slider|button|opacity|alpha|透明|菜单|悬浮|mod.?menu' | head -n 1000 | sed "s#^#$entry: #" >> output/deep-scan/native-and-dex-strings.txt || true
+                ;;
+            esac
+          done < output/apk-entries.txt
+
+      - name: Upload deeper app code scan
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BRFMod-v70-deep-scan
+          path: output/deep-scan/
+          if-no-files-found: warn
+          compression-level: 9
+          retention-days: 7
+
       - name: Upload compact UI analysis
         if: always()
         uses: actions/upload-artifact@v4
