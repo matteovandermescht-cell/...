@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>BRF — Single-page UI concept</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: "Arial Rounded MT Bold", "Trebuchet MS", Arial, sans-serif;
+      background: #07529a;
+      color: #f5f8ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      padding: clamp(16px, 3vw, 42px);
+      background:
+        radial-gradient(circle at 12% 80%, #146cb2 0 2px, transparent 3px),
+        radial-gradient(circle at 82% 25%, #1767a8 0 3px, transparent 4px),
+        linear-gradient(145deg, #0754a0, #063c7b 70%, #064b91);
+    }
+    .app { width: min(1480px, 100%); margin: 0 auto; }
+    header {
+      display: grid;
+      grid-template-columns: auto minmax(160px, 1fr) auto;
+      align-items: center;
+      gap: clamp(16px, 4vw, 56px);
+      margin-bottom: 24px;
+    }
+    .brand {
+      margin: 0;
+      color: white;
+      font-size: clamp(28px, 4vw, 48px);
+      font-weight: 1000;
+      letter-spacing: -2px;
+      text-shadow: 0 3px 0 #101b2d, 2px 4px 0 #101b2d;
+    }
+    .channel {
+      justify-self: center;
+      width: min(440px, 100%);
+      padding: 13px 20px;
+      border-radius: 18px;
+      background: #104878;
+      box-shadow: inset 0 1px 0 #ffffff15, 0 5px 12px #001d4530;
+      text-align: center;
+      font-size: clamp(16px, 2vw, 25px);
+      font-weight: 900;
+      text-shadow: 0 2px 2px #101b2d;
+    }
+    .close {
+      width: 74px;
+      height: 74px;
+      border: 0;
+      border-radius: 20px;
+      background: #104878;
+      color: #c4d4e4;
+      font-size: 48px;
+      font-weight: 300;
+      line-height: 1;
+      cursor: pointer;
+    }
+    main {
+      min-height: min(560px, 62vh);
+      padding: clamp(24px, 4vw, 58px);
+      border: 1px solid #ffffff0a;
+      border-radius: 34px;
+      background: #123f67e8;
+      box-shadow: inset 0 1px 0 #ffffff0c, 0 16px 40px #00234a20;
+    }
+    .feature {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+      width: 100%;
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: clamp(22px, 3.3vw, 42px);
+      border-radius: 26px;
+      background: #164b76;
+      box-shadow: inset 0 1px 0 #ffffff0b;
+    }
+    h2 {
+      margin: 0 0 8px;
+      font-size: clamp(25px, 3vw, 40px);
+      font-weight: 1000;
+      text-shadow: 0 3px 0 #101b2d;
+    }
+    .description {
+      margin: 0;
+      color: #d1deeb;
+      font-size: clamp(15px, 1.7vw, 21px);
+      font-weight: 800;
+      text-shadow: 0 2px 2px #101b2d;
+    }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex: 0 0 auto;
+      font-size: 18px;
+      font-weight: 900;
+      text-shadow: 0 2px 2px #101b2d;
+    }
+    .toggle {
+      position: relative;
+      width: 112px;
+      height: 66px;
+      padding: 0;
+      border: 0;
+      border-radius: 40px;
+      background: #536d83;
+      cursor: pointer;
+      transition: background .18s ease;
+    }
+    .toggle::after {
+      content: "";
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      width: 50px;
+      height: 50px;
+      border-radius: 50%;
+      background: #c8d4df;
+      box-shadow: 0 2px 5px #00172c55;
+      transition: transform .18s ease;
+    }
+    .toggle[aria-checked="true"] { background: #77aebe; }
+    .toggle[aria-checked="true"]::after { transform: translateX(46px); }
+    footer {
+      display: flex;
+      justify-content: center;
+      margin-top: 22px;
+    }
+    .tab {
+      min-width: 260px;
+      padding: 18px 38px;
+      border: 0;
+      border-radius: 20px;
+      background: #5a91a8;
+      color: #101e2b;
+      font: 1000 clamp(18px, 2vw, 25px) inherit;
+      font-weight: 1000;
+      text-shadow: 0 1px 0 #b6d3df;
+      box-shadow: inset 0 1px 0 #ffffff25;
+    }
+    .note {
+      margin: 16px 0 0;
+      color: #b9d1e4;
+      font: 12px/1.5 Arial, sans-serif;
+      text-align: center;
+      opacity: .75;
+    }
+    @media (max-width: 640px) {
+      header { grid-template-columns: auto 1fr auto; gap: 10px; }
+      .channel { padding: 11px 8px; font-size: 14px; }
+      .close { width: 48px; height: 48px; border-radius: 14px; font-size: 32px; }
+      main { min-height: 55vh; padding: 18px; border-radius: 24px; }
+      .feature { align-items: flex-start; flex-direction: column; }
+      .status { width: 100%; justify-content: space-between; }
+      .tab { min-width: 210px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1 class="brand">BRF</h1>
+      <div class="channel">t.me/BRFMod</div>
+      <button class="close" type="button" aria-label="Close preview" title="Close preview">×</button>
+    </header>
+
+    <main aria-label="Combat page">
+      <section class="feature" aria-labelledby="auto-farm-title">
+        <div>
+          <h2 id="auto-farm-title">Auto Farm</h2>
+          <p class="description">Plays automatically and earns trophies</p>
+        </div>
+        <div class="status">
+          <button class="toggle" type="button" role="switch" aria-checked="false" aria-label="Auto Farm visual status"></button>
+          <span id="status-label">Disabled</span>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <button class="tab" type="button" aria-current="page">Combat</button>
+    </footer>
+    <p class="note">Standalone visual UI concept — the switch changes display state only and is not connected to game automation.</p>
+  </div>
+  <script>
+    const toggle = document.querySelector(".toggle");
+    const label = document.querySelector("#status-label");
+    toggle.addEventListener("click", () => {
+      const enabled = toggle.getAttribute("aria-checked") !== "true";
+      toggle.setAttribute("aria-checked", String(enabled));
+      label.textContent = enabled ? "Enabled" : "Disabled";
+    });
+    document.querySelector(".close").addEventListener("click", () => {
+      document.querySelector(".app").hidden = true;
+    });
+  </script>
+</body>
+</html>
